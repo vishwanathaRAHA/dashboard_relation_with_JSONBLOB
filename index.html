@@ -2763,323 +2763,417 @@ This report was generated from the Claims Analytics Dashboard.
         // ============ JSONBLOB.COM INTEGRATION ============
         // No API keys needed, completely anonymous
         
-        let isViewOnlyMode = false;
+        // ============ SHARING FUNCTIONALITY ============
+// Using CORS proxy for JSONBlob to avoid CORS issues
 
-        // Load shared data from JSONBlob.com
-        async function loadSharedDataFromJSONBlob(blobId) {
-            showLoading(true);
-            document.getElementById('loadingOverlay').querySelector('p').textContent = 'Loading shared dashboard...';
-            
-            try {
-                console.log('Loading from JSONBlob, ID:', blobId);
-                
-                const response = await fetch(`https://jsonblob.com/api/jsonBlob/${blobId}`, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    }
-                });
-                
-                if (response.status === 404) {
-                    throw new Error('Link expired or invalid ID.');
-                }
-                if (!response.ok) {
-                    throw new Error(`Failed to load: ${response.status} ${response.statusText}`);
-                }
-                
-                const parsed = await response.json();
-                
-                if (parsed && parsed.data) {
-                    rawData = parsed.data;
-                    columnMapping = parsed.columnMapping;
-                    
-                    // Restore Premium
-                    if (parsed.premium) {
-                        console.log('Restoring premium:', parsed.premium);
-                        const premiumInput = document.getElementById('premiumInput');
-                        if (premiumInput) {
-                            premiumInput.value = parsed.premium;
-                        } else {
-                            console.error('Premium Input element NOT found!');
-                        }
-                    }
-                    
-                    console.log('Loaded', rawData.length, 'records');
-                    
-                    applyViewOnlyMode();
-                    
-                    const uploadSection = document.getElementById('uploadSection');
-                    if (uploadSection) {
-                        uploadSection.style.display = 'none';
-                    }
-                    
-                    const dashboardContent = document.getElementById('dashboardContent');
-                    if (dashboardContent) {
-                        dashboardContent.classList.remove('hidden');
-                        dashboardContent.style.display = 'block';
-                    }
-                    
-                    document.getElementById('lastUpdated').textContent = `Shared: ${parsed.createdAt || 'View-only'}`;
-                    
-                    populateFilters();
-                    filteredData = [...rawData];
-                    updateDashboard();
-                    
-                    // Force update premium ratio after loading
-                    updatePremiumRatio();
-                    
-                    const shareBtn = document.getElementById('shareBtn');
-                    if (shareBtn) shareBtn.style.display = 'none';
-                    
-                } else {
-                    throw new Error('Invalid data format received from server');
-                }
-            } catch (error) {
-                console.error('Load error:', error);
-                alert('Error loading shared dashboard: ' + error.message);
-            }
-            
-            showLoading(false);
+// ============ SHARING FUNCTIONALITY ============
+// Using CORS proxy for JSONBlob to avoid CORS issues
+
+let isViewOnlyMode = false;
+
+// Save data using CORS proxy to JSONBlob
+async function saveDataToJSONBlob() {
+    const premiumVal = document.getElementById('premiumInput')?.value || 0;
+    const dataToSave = {
+        data: rawData,
+        columnMapping: columnMapping,
+        premium: premiumVal,
+        createdAt: new Date().toLocaleString(),
+        recordCount: rawData.length
+    };
+    
+    try {
+        console.log('Saving to JSONBlob via proxy...');
+        document.getElementById('shareLink').value = 'Uploading...';
+        
+        // First, create the blob on JSONBlob
+        const response = await fetch('https://corsproxy.io/?https://jsonblob.com/api/jsonBlob', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(dataToSave)
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('JSONBlob response error:', errorText);
+            throw new Error(`Upload failed: ${response.status}`);
         }
-
-        // Save data to JSONBlob.com
-        async function saveDataToJSONBlob() {
-            const premiumVal = document.getElementById('premiumInput')?.value || 0;
-            const dataToSave = {
-                data: rawData,
-                columnMapping: columnMapping,
-                premium: premiumVal, // Save the premium value
-                createdAt: new Date().toLocaleString(),
-                recordCount: rawData.length
-            };
-            
-            try {
-                console.log('Saving to JSONBlob...');
-                document.getElementById('shareLink').value = 'Uploading...';
-                
-                const response = await fetch('https://jsonblob.com/api/jsonBlob', {
-                    method: 'POST',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(dataToSave)
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`Error: ${response.status}`);
-                }
-                
-                // JSONBlob returns the ID in the Location header
-                const blobId = response.headers.get('Location')?.split('/').pop();
-                
-                if (!blobId) {
-                    throw new Error('Failed to get blob ID from response');
-                }
-                
-                console.log('Saved with ID:', blobId);
-                return blobId;
-                
-            } catch (error) {
-                console.error('JSONBlob error:', error);
-                throw error;
-            }
+        
+        // Get blob ID from response headers
+        const location = response.headers.get('Location');
+        if (!location) {
+            throw new Error('No location header received');
         }
-
-        // Apply view-only restrictions
-        function applyViewOnlyMode() {
-            // Show view-only badge
-            document.getElementById('viewOnlyBadge').classList.remove('hidden');
-            
-            // Hide upload-related buttons
-            const uploadSection = document.getElementById('uploadSection');
-            if (uploadSection) {
-                // Do NOT remove, just hide completely so we can still read premiumInput
-                uploadSection.style.display = 'none';
-            }
-            
-            // Hide "New Data" button in slicers
-            const newDataBtn = document.querySelector('button[onclick="showUpload()"]');
-            if (newDataBtn) newDataBtn.classList.add('hidden');
-            
-            // Hide version banner
-            const versionBanner = document.getElementById('versionBanner');
-            if (versionBanner) versionBanner.style.display = 'none';
-            
-            // Update title to indicate view mode
-            document.title = 'Claims Dashboard (View Only)';
+        
+        const blobId = location.split('/').pop();
+        console.log('Saved with ID:', blobId);
+        
+        // Verify the blob was created by fetching it
+        const verifyResponse = await fetch(`https://corsproxy.io/?https://jsonblob.com/api/jsonBlob/${blobId}`);
+        if (!verifyResponse.ok) {
+            throw new Error('Failed to verify blob creation');
         }
+        
+        return blobId;
+        
+    } catch (error) {
+        console.error('JSONBlob error:', error);
+        
+        // Fallback: Generate a local ID and store in localStorage
+        console.log('Using localStorage fallback...');
+        const fallbackId = 'local_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        console.log('Generated fallback ID:', fallbackId);
+        
+        // Store locally
+        localStorage.setItem(`claims_dashboard_${fallbackId}`, JSON.stringify(dataToSave));
+        
+        // Also store with a shorter key for easier retrieval
+        localStorage.setItem(`dashboard_share_${fallbackId}`, JSON.stringify(dataToSave));
+        
+        return fallbackId;
+    }
+}
 
-        // Open share modal
-        function openShareModal() {
-            document.getElementById('shareModal').classList.add('show');
-            document.getElementById('shareLink').value = '';
-            document.getElementById('copyStatus').classList.add('hidden');
-        }
-
-        // Close share modal
-        function closeShareModal(e) {
-            if (!e || e.target === document.getElementById('shareModal')) {
-                document.getElementById('shareModal').classList.remove('show');
-            }
-        }
-
-        // Generate shareable link using JSONBlob.com
-        async function generateShareLink() {
-            try {
-                const generateBtn = document.querySelector('button[onclick="generateShareLink()"]');
-                const originalText = generateBtn.innerHTML;
-                generateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-                generateBtn.disabled = true;
-                
-                const blobId = await saveDataToJSONBlob();
-                const baseUrl = window.location.origin + window.location.pathname;
-                const shareUrl = `${baseUrl}?mode=view&id=${blobId}`;
-                
-                document.getElementById('shareLink').value = shareUrl;
-                document.getElementById('copyStatus').classList.add('hidden');
-                
-                generateBtn.innerHTML = '<i class="fas fa-check"></i> Link Ready!';
-                setTimeout(() => {
-                    generateBtn.innerHTML = originalText;
-                    generateBtn.disabled = false;
-                }, 2000);
-                
-            } catch (error) {
-                alert('Error generating share link: ' + error.message + '\n\nPlease try again.');
-                const generateBtn = document.querySelector('button[onclick="generateShareLink()"]');
-                generateBtn.innerHTML = '<i class="fas fa-link"></i> Generate Link';
-                generateBtn.disabled = false;
-            }
-        }
-
-        // Copy share link to clipboard
-        function copyShareLink() {
-            const linkInput = document.getElementById('shareLink');
-            const link = linkInput.value;
-            
-            if (!link || link.includes('Uploading')) {
-                alert('Please wait for the link to be generated');
+// Load shared data from JSONBlob
+async function loadSharedDataFromJSONBlob(blobId) {
+    showLoading(true);
+    document.getElementById('loadingOverlay').querySelector('p').textContent = 'Loading shared dashboard...';
+    
+    try {
+        console.log('Loading from JSONBlob, ID:', blobId);
+        
+        // Check if it's a fallback ID
+        if (blobId.startsWith('local_')) {
+            // Load from localStorage
+            const savedData = localStorage.getItem(`claims_dashboard_${blobId}`) || 
+                             localStorage.getItem(`dashboard_share_${blobId}`);
+            if (savedData) {
+                const parsed = JSON.parse(savedData);
+                loadSharedData(parsed);
                 return;
-            }
-            
-            navigator.clipboard.writeText(link).then(() => {
-                document.getElementById('copyStatus').classList.remove('hidden');
-                setTimeout(() => {
-                    document.getElementById('copyStatus').classList.add('hidden');
-                }, 3000);
-            }).catch(err => {
-                // Fallback for older browsers
-                linkInput.select();
-                document.execCommand('copy');
-                document.getElementById('copyStatus').classList.remove('hidden');
-            });
-        }
-
-        // Override initializeDashboard to show Share button
-        const originalInitializeDashboard = initializeDashboard;
-        initializeDashboard = function() {
-            originalInitializeDashboard();
-            
-            // Show share button only if not in view-only mode
-            if (!isViewOnlyMode) {
-                document.getElementById('shareBtn').classList.remove('hidden');
-            }
-        };
-
-        // Create floating icons background - FIXED
-        function createFloatingIcons() {
-            const iconsContainer = document.getElementById('floatingIcons');
-            const icons = ['fa-chart-line', 'fa-disease', 'fa-hospital', 'fa-user-injured', 
-                           'fa-stethoscope', 'fa-pills', 'fa-heartbeat', 'fa-prescription-bottle',
-                           'fa-file-invoice-dollar', 'fa-clipboard-check', 'fa-percentage', 'fa-calculator'];
-            
-            // Clear any existing icons
-            iconsContainer.innerHTML = '';
-            
-            // Create 30 floating icons
-            for (let i = 0; i < 30; i++) {
-                const icon = document.createElement('i');
-                icon.className = `floating-icon fas ${icons[i % icons.length]}`;
-                
-                // Random position
-                icon.style.left = `${Math.random() * 100}%`;
-                icon.style.top = `${Math.random() * 100}%`;
-                
-                // Random size
-                const size = Math.random() * 20 + 16;
-                icon.style.fontSize = `${size}px`;
-                
-                // Random animation delay
-                icon.style.animationDelay = `${Math.random() * 5}s`;
-                
-                iconsContainer.appendChild(icon);
+            } else {
+                throw new Error('Shared data not found. The link may have expired.');
             }
         }
-
-        // Initialize on page load - check view mode FIRST before anything else
-        document.addEventListener('DOMContentLoaded', () => {
-            // Create floating icons - FIXED
-            createFloatingIcons();
-            
-            if (window.isViewOnlyFromURL && window.sharedDataId) {
-                isViewOnlyMode = true;
-                
-                // Force hide upload section but DO NOT remove it so we can access premiumInput
-                const uploadSection = document.getElementById('uploadSection');
-                if (uploadSection) {
-                    uploadSection.style.display = 'none';
-                }
-                
-                // Load data from JSONBlob
-                loadSharedDataFromJSONBlob(window.sharedDataId);
+        
+        // Try with CORS proxy
+        console.log('Fetching from JSONBlob...');
+        const response = await fetch(`https://corsproxy.io/?https://jsonblob.com/api/jsonBlob/${blobId}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json'
             }
         });
         
-        // Fallback: Load from localStorage (for old links)
-        function loadSharedDataFromLocalStorage(dataId) {
-            showLoading(true);
+        if (!response.ok) {
+            console.error('JSONBlob fetch failed:', response.status);
+            throw new Error(`Failed to load data (${response.status})`);
+        }
+        
+        const parsed = await response.json();
+        console.log('Data loaded successfully');
+        loadSharedData(parsed);
+        
+    } catch (error) {
+        console.error('Load error:', error);
+        
+        // Try localStorage as fallback
+        try {
+            const allKeys = Object.keys(localStorage);
+            const matchingKey = allKeys.find(key => key.includes(blobId));
+            if (matchingKey) {
+                console.log('Found in localStorage:', matchingKey);
+                const savedData = localStorage.getItem(matchingKey);
+                const parsed = JSON.parse(savedData);
+                loadSharedData(parsed);
+                return;
+            }
+        } catch (e) {
+            console.error('LocalStorage fallback also failed:', e);
+        }
+        
+        alert('Error loading shared dashboard: ' + error.message + '\n\nYou can try uploading your own data file.');
+        showLoading(false);
+    }
+}
+
+// Helper function to load shared data
+function loadSharedData(parsed) {
+    if (parsed && parsed.data) {
+        rawData = parsed.data;
+        columnMapping = parsed.columnMapping;
+        
+        console.log('Data loaded:', rawData.length, 'records');
+        console.log('Column mapping:', columnMapping);
+        
+        // Restore Premium
+        if (parsed.premium) {
+            console.log('Restoring premium:', parsed.premium);
+            const premiumInput = document.getElementById('premiumInput');
+            if (premiumInput) {
+                premiumInput.value = parsed.premium;
+            }
+        }
+        
+        applyViewOnlyMode();
+        
+        const uploadSection = document.getElementById('uploadSection');
+        if (uploadSection) {
+            uploadSection.style.display = 'none';
+        }
+        
+        const dashboardContent = document.getElementById('dashboardContent');
+        if (dashboardContent) {
+            dashboardContent.classList.remove('hidden');
+            dashboardContent.style.display = 'block';
+        }
+        
+        document.getElementById('lastUpdated').textContent = `Shared: ${parsed.createdAt || 'View-only'}`;
+        
+        populateFilters();
+        filteredData = [...rawData];
+        updateDashboard();
+        
+        // Force update premium ratio after loading
+        updatePremiumRatio();
+        
+        const shareBtn = document.getElementById('shareBtn');
+        if (shareBtn) shareBtn.style.display = 'none';
+        
+        showLoading(false);
+        
+    } else {
+        throw new Error('Invalid data format received');
+    }
+}
+
+// Apply view-only restrictions
+function applyViewOnlyMode() {
+    console.log('Applying view-only mode');
+    // Show view-only badge
+    document.getElementById('viewOnlyBadge').classList.remove('hidden');
+    
+    // Hide upload-related buttons
+    const uploadSection = document.getElementById('uploadSection');
+    if (uploadSection) {
+        uploadSection.style.display = 'none';
+    }
+    
+    // Hide "New Data" button in slicers
+    const newDataBtn = document.querySelector('button[onclick="showUpload()"]');
+    if (newDataBtn) newDataBtn.classList.add('hidden');
+    
+    // Hide version banner
+    const versionBanner = document.getElementById('versionBanner');
+    if (versionBanner) versionBanner.style.display = 'none';
+    
+    // Update title to indicate view mode
+    document.title = 'Claims Dashboard (View Only)';
+}
+
+// Open share modal
+function openShareModal() {
+    document.getElementById('shareModal').classList.add('show');
+    document.getElementById('shareLink').value = '';
+    document.getElementById('copyStatus').classList.add('hidden');
+}
+
+// Close share modal
+function closeShareModal(e) {
+    if (!e || e.target === document.getElementById('shareModal')) {
+        document.getElementById('shareModal').classList.remove('show');
+    }
+}
+
+// Generate shareable link
+async function generateShareLink() {
+    try {
+        const generateBtn = document.querySelector('button[onclick="generateShareLink()"]');
+        const originalText = generateBtn.innerHTML;
+        generateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+        generateBtn.disabled = true;
+        
+        console.log('Starting data upload...');
+        const blobId = await saveDataToJSONBlob();
+        console.log('Got blob ID:', blobId);
+        
+        if (!blobId) {
+            throw new Error('Failed to get share ID');
+        }
+        
+        // Build the share URL
+        const baseUrl = window.location.origin + window.location.pathname;
+        const shareUrl = `${baseUrl}?mode=view&id=${encodeURIComponent(blobId)}`;
+        console.log('Generated share URL:', shareUrl);
+        
+        // Update the input field
+        const shareLinkInput = document.getElementById('shareLink');
+        if (shareLinkInput) {
+            shareLinkInput.value = shareUrl;
+            shareLinkInput.select(); // Select the text for easy copying
+        }
+        
+        document.getElementById('copyStatus').classList.add('hidden');
+        
+        generateBtn.innerHTML = '<i class="fas fa-check"></i> Link Ready!';
+        setTimeout(() => {
+            generateBtn.innerHTML = originalText;
+            generateBtn.disabled = false;
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Error generating link:', error);
+        alert('Error: ' + error.message + '\n\nAlternative: Use Export feature to save data file, then share the file directly.');
+        const generateBtn = document.querySelector('button[onclick="generateShareLink()"]');
+        if (generateBtn) {
+            generateBtn.innerHTML = '<i class="fas fa-link"></i> Generate Link';
+            generateBtn.disabled = false;
+        }
+    }
+}
+
+// Copy share link to clipboard with better error handling
+function copyShareLink() {
+    const linkInput = document.getElementById('shareLink');
+    if (!linkInput) {
+        alert('Share link input not found');
+        return;
+    }
+    
+    const link = linkInput.value;
+    
+    if (!link || link.trim() === '' || link.includes('Uploading')) {
+        alert('Please wait for the link to be generated or generate a link first');
+        return;
+    }
+    
+    // Method 1: Modern clipboard API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(() => {
+            showCopySuccess();
+        }).catch(err => {
+            console.log('Clipboard API failed, using fallback:', err);
+            useClipboardFallback(linkInput);
+        });
+    } else {
+        // Method 2: Fallback for older browsers
+        useClipboardFallback(linkInput);
+    }
+}
+
+// Fallback clipboard method
+function useClipboardFallback(linkInput) {
+    try {
+        // Select the text
+        linkInput.select();
+        linkInput.setSelectionRange(0, 99999); // For mobile devices
+        
+        // Try to copy
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showCopySuccess();
+        } else {
+            alert('Failed to copy. Please manually select and copy the link (Ctrl+C or Cmd+C).');
+        }
+    } catch (err) {
+        console.error('Fallback copy failed:', err);
+        // Last resort: show the link for manual copy
+        alert('Please manually copy this link:\n\n' + linkInput.value);
+    }
+}
+
+// Show copy success message
+function showCopySuccess() {
+    const copyStatus = document.getElementById('copyStatus');
+    if (copyStatus) {
+        copyStatus.classList.remove('hidden');
+        setTimeout(() => {
+            copyStatus.classList.add('hidden');
+        }, 3000);
+    }
+}
+
+// Override initializeDashboard to show Share button
+const originalInitializeDashboard = initializeDashboard;
+initializeDashboard = function() {
+    originalInitializeDashboard();
+    
+    // Show share button only if not in view-only mode
+    if (!isViewOnlyMode) {
+        document.getElementById('shareBtn').classList.remove('hidden');
+    }
+};
+
+
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    // Create floating icons
+    createFloatingIcons();
+    
+    if (window.isViewOnlyFromURL && window.sharedDataId) {
+        isViewOnlyMode = true;
+        
+        console.log('View-only mode detected with ID:', window.sharedDataId);
+        
+        // Force hide upload section but DO NOT remove it so we can access premiumInput
+        const uploadSection = document.getElementById('uploadSection');
+        if (uploadSection) {
+            uploadSection.style.display = 'none';
+        }
+        
+        // Load data from JSONBlob
+        loadSharedDataFromJSONBlob(window.sharedDataId);
+    }
+});
+
+// Fallback: Load from localStorage (for old links)
+function loadSharedDataFromLocalStorage(dataId) {
+    showLoading(true);
+    
+    try {
+        const savedData = localStorage.getItem(`claims_dashboard_${dataId}`);
+        
+        if (savedData) {
+            const parsed = JSON.parse(savedData);
+            rawData = parsed.data;
+            columnMapping = parsed.columnMapping;
             
-            try {
-                const savedData = localStorage.getItem(`claims_dashboard_${dataId}`);
-                
-                if (savedData) {
-                    const parsed = JSON.parse(savedData);
-                    rawData = parsed.data;
-                    columnMapping = parsed.columnMapping;
-                    
-                    applyViewOnlyMode();
-                    
-                    const uploadSection = document.getElementById('uploadSection');
-                    if (uploadSection) uploadSection.style.display = 'none';
-                    
-                    const dashboardContent = document.getElementById('dashboardContent');
-                    if (dashboardContent) {
-                        dashboardContent.classList.remove('hidden');
-                        dashboardContent.style.display = 'block';
-                    }
-                    
-                    document.getElementById('lastUpdated').textContent = `Data from: ${parsed.createdAt || 'Shared dashboard'}`;
-                    
-                    populateFilters();
-                    filteredData = [...rawData];
-                    updateDashboard();
-                    
-                    const shareBtn = document.getElementById('shareBtn');
-                    if (shareBtn) shareBtn.style.display = 'none';
-                    
-                } else {
-                    alert('Shared data not found. The link may have expired.');
-                    window.location.href = window.location.pathname;
-                }
-            } catch (error) {
-                alert('Error loading shared data: ' + error.message);
-                window.location.href = window.location.pathname;
+            applyViewOnlyMode();
+            
+            const uploadSection = document.getElementById('uploadSection');
+            if (uploadSection) uploadSection.style.display = 'none';
+            
+            const dashboardContent = document.getElementById('dashboardContent');
+            if (dashboardContent) {
+                dashboardContent.classList.remove('hidden');
+                dashboardContent.style.display = 'block';
             }
             
-            showLoading(false);
+            document.getElementById('lastUpdated').textContent = `Data from: ${parsed.createdAt || 'Shared dashboard'}`;
+            
+            populateFilters();
+            filteredData = [...rawData];
+            updateDashboard();
+            
+            const shareBtn = document.getElementById('shareBtn');
+            if (shareBtn) shareBtn.style.display = 'none';
+            
+        } else {
+            alert('Shared data not found. The link may have expired.');
+            window.location.href = window.location.pathname;
         }
+    } catch (error) {
+        alert('Error loading shared data: ' + error.message);
+        window.location.href = window.location.pathname;
+    }
+    
+    showLoading(false);
+}
+
     </script>
 </body>
 </html>
